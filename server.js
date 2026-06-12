@@ -52,7 +52,7 @@ Return a JSON object with exactly these fields:
 Return only valid JSON, nothing else.`;
 
   try {
-    const model = genai.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
+    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
     const text = result.response.text().trim().replace(/```json|```/g, "");
     const parsed = JSON.parse(text);
