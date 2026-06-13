@@ -12,12 +12,27 @@ const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.json({ status: "ok", app: "Courage Daily" }));
 
-// ── Challenge levels config ───────────────────────────────────────────────────
+// ── Difficulty config ────────────────────────────────────────────────────────
 const DIFFICULTY_PROMPTS = {
   easy: "very easy, low-pressure, minimal interaction required (e.g. smile at someone, say thank you sincerely)",
   medium: "moderate, requires starting a brief conversation or asking a question",
   hard: "challenging, requires sustained interaction or putting yourself out there significantly",
 };
+
+// ── Retry helper for transient 503s ──────────────────────────────────────────
+async function generateWithRetry(model, prompt, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await model.generateContent(prompt);
+    } catch (e) {
+      if (e.status === 503 && i < attempts - 1) {
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        throw e;
+      }
+    }
+  }
+}
 
 // ── Generate challenge ────────────────────────────────────────────────────────
 app.post("/challenge", async (req, res) => {
@@ -53,7 +68,7 @@ Return only valid JSON, nothing else.`;
 
   try {
     const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(prompt);
+    const result = await generateWithRetry(model, prompt);
     const text = result.response.text().trim().replace(/```json|```/g, "");
     const parsed = JSON.parse(text);
     res.json(parsed);
