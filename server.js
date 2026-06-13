@@ -2,12 +2,32 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// ── Send push notification via Expo ──────────────────────────────────────────
+async function sendPushNotification(token, title, body) {
+  if (!token) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ to: token, title, body, sound: "default" }),
+    });
+  } catch (e) {
+    console.error("Push send error:", e);
+  }
+}
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.json({ status: "ok", app: "Courage Daily" }));
@@ -75,6 +95,58 @@ Return only valid JSON, nothing else.`;
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to generate challenge" });
+  }
+});
+
+// ── Update score & notify overtaken users ─────────────────────────────────────
+app.post("/update-score", async (req, res) => {
+  const { user_id, xp } = req.body;
+  if (!user_id || xp === undefined) return res.status(400).json({ error: "user_id and xp required" });
+
+  try {
+    // Save the new XP
+    await supabaseAdmin.from("profiles").update({ xp }).eq("id", user_id);
+
+    // Fetch full leaderboard sorted by xp
+    const { data: board, error } = await supabaseAdmin
+      .from("profiles")
+      .select("id, username, xp, last_rank, push_token")
+      .order("xp", { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    const myNewRank = board.findIndex(p => p.id === user_id) + 1;
+    const me = board.find(p => p.id === user_id);
+
+    // Find anyone whose last_rank was BETTER (lower number) than myNewRank,
+    // but whose current rank is now WORSE (i.e., I passed them)
+    for (let i = 0; i < board.length; i++) {
+      const person = board[i];
+      const currentRank = i + 1;
+      if (person.id === user_id) continue;
+
+      const wasAheadOfMe = person.last_rank != null && person.last_rank < myNewRank;
+      const nowBehindMe  = currentRank > myNewRank;
+
+      if (wasAheadOfMe && nowBehindMe && person.push_token) {
+        await sendPushNotification(
+          person.push_token,
+          "You've been overtaken! 📉",
+          `${me?.username || "Someone"} just passed you on the leaderboard. Time to reclaim your spot!`
+        );
+      }
+    }
+
+    // Update last_rank for everyone based on current standings
+    await Promise.all(board.map((p, i) =>
+      supabaseAdmin.from("profiles").update({ last_rank: i + 1 }).eq("id", p.id)
+    ));
+
+    res.json({ rank: myNewRank, total: board.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update score" });
   }
 });
 
