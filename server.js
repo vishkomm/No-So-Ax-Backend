@@ -98,6 +98,19 @@ Return only valid JSON, nothing else.`;
   }
 });
 
+// ── Delete account ────────────────────────────────────────────────────────────
+app.post("/delete-account", async (req, res) => {
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: "user_id required" });
+  try {
+    await supabaseAdmin.auth.admin.deleteUser(user_id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete account" });
+  }
+});
+
 // ── Update score & notify overtaken users ─────────────────────────────────────
 app.post("/update-score", async (req, res) => {
   const { user_id, xp } = req.body;
